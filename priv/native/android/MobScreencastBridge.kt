@@ -17,9 +17,15 @@
 package io.mob.screencast
 
 import android.app.Activity
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.hardware.display.DisplayManager
+import android.os.Build
 import android.hardware.display.VirtualDisplay
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
@@ -27,6 +33,7 @@ import android.media.MediaFormat
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Bundle
+import android.os.IBinder
 import android.util.Log
 import android.view.Surface
 import androidx.activity.result.ActivityResultLauncher
@@ -129,16 +136,51 @@ object MobScreencastBridge : io.mob.plugin.MobActivityAware {
         }
     }
 
-    // ── MediaProjection result → encoder + virtual display ─────────────────
+    // ── MediaProjection result → foreground service → encoder ──────────────
+
+    // Consent granted. We CANNOT obtain the projection here: getMediaProjection ->
+    // MediaProjection.start() throws unless a foreground service of type
+    // mediaProjection is already running (enforced on API 30+ on this hardware). So
+    // stash the result and start ScreencastService; it foregrounds itself and then
+    // calls beginCaptureFromService below.
+    private var pendingResultCode: Int = 0
+    private var pendingData: Intent? = null
 
     internal fun onProjectionResult(resultCode: Int, data: Intent?) {
+        if (data == null) return
+        val activity = activityRef?.get() ?: run {
+            Log.e("MobScreencast", "no activity to start the capture service")
+            return
+        }
+        pendingResultCode = resultCode
+        pendingData = data
+        try {
+            val svc = Intent(activity, ScreencastService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                activity.startForegroundService(svc)
+            } else {
+                activity.startService(svc)
+            }
+        } catch (e: Throwable) {
+            Log.e("MobScreencast", "failed to start capture service: ${e.message}", e)
+        }
+    }
+
+    private var serviceRef: WeakReference<Service>? = null
+
+    // Called from ScreencastService.onStartCommand once it is foregrounded as type
+    // mediaProjection. Now getMediaProjection is legal.
+    internal fun beginCaptureFromService(service: Service) {
+        serviceRef = WeakReference(service)
+        val data = pendingData
+        val resultCode = pendingResultCode
         // Wrap the whole setup: a MediaCodec/VirtualDisplay misconfiguration must log +
         // clean up, not crash the host app.
         try {
             val activity = activityRef?.get()
             if (activity == null || data == null) return
             val mpm =
-                activity.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                service.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             val proj = mpm.getMediaProjection(resultCode, data) ?: return
             projection = proj
             // API 34 requires a registered callback; harmless earlier.
@@ -224,6 +266,14 @@ object MobScreencastBridge : io.mob.plugin.MobActivityAware {
         try { inputSurface?.release() } catch (_: Throwable) {}
         try { projection?.stop() } catch (_: Throwable) {}
         virtualDisplay = null; encoder = null; inputSurface = null; projection = null; csd = null
+        try {
+            serviceRef?.get()?.let { svc ->
+                @Suppress("DEPRECATION")
+                svc.stopForeground(true)
+                svc.stopSelf()
+            }
+        } catch (_: Throwable) {}
+        serviceRef = null
     }
 
     // Cap the longer edge to maxSize (if set), preserve aspect, round to even (H264).
@@ -234,4 +284,66 @@ object MobScreencastBridge : io.mob.plugin.MobActivityAware {
     }
 
     private fun even(n: Int): Int = if (n % 2 == 0) n else n - 1
+}
+
+// ScreencastService — the foreground service a MediaProjection capture must run inside.
+//
+// Android requires MediaProjection.start() (called by getMediaProjection) to happen
+// while a foreground service of type mediaProjection is running — enforced even on
+// API 30 (Android 11) on this hardware (verified: Moto G power 2021). So the bridge
+// can't obtain the projection straight from the Activity consent callback.
+//
+// onProjectionResult stashes the consent result and starts this service;
+// onStartCommand foregrounds it as type mediaProjection, then hands control back to
+// MobScreencastBridge.beginCaptureFromService to obtain the projection + start the
+// encoder. The matching <service android:foregroundServiceType="mediaProjection">
+// element lives in the host AndroidManifest (the plugin manifest contributes the
+// uses-permission entries but not a <service> yet — see PLAN.md known gap). This class
+// lives in the bridge_kt file because the plugin merge copies only that one Kotlin
+// source per plugin.
+class ScreencastService : Service() {
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        startForegroundCompat()
+        // Now a foreground service of type mediaProjection — getMediaProjection is legal.
+        MobScreencastBridge.beginCaptureFromService(this)
+        return START_NOT_STICKY
+    }
+
+    private fun startForegroundCompat() {
+        val channelId = "mob_screencast"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val nm = getSystemService(NotificationManager::class.java)
+            if (nm != null && nm.getNotificationChannel(channelId) == null) {
+                nm.createNotificationChannel(
+                    NotificationChannel(
+                        channelId, "Screen capture", NotificationManager.IMPORTANCE_LOW,
+                    ),
+                )
+            }
+        }
+        val notif: Notification =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                Notification.Builder(this, channelId)
+            } else {
+                @Suppress("DEPRECATION")
+                Notification.Builder(this)
+            }
+                .setContentTitle("Screen capture active")
+                .setSmallIcon(android.R.drawable.ic_menu_camera)
+                .build()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIF_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION,
+            )
+        } else {
+            startForeground(NOTIF_ID, notif)
+        }
+    }
+
+    companion object {
+        private const val NOTIF_ID = 8731
+    }
 }

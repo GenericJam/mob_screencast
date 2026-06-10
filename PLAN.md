@@ -30,13 +30,32 @@ Pairs with sloppy_joe's WebRTC device view: the H264 NALs drop straight into
       fragment launch (consent dialog must post to the main thread).
     - [x] On-device: dist RPC confirmed `MobScreencast` + the NIF **load** and
       `start_stream/2` is **callable** (collector launched on the Moto G).
-    - [ ] **Frame flow blocked by the device environment, not the plugin:** the Moto G's
-      dist is flaky (two-phone port collision; Android backgrounding suspends the BEAM, so
-      the node drops) and the shared demo host's other plugins (camera screen + its
-      permission dialog) compete with the MediaProjection consent. Needs a clean dedicated
-      session (a dedicated emulator, or the phone with the other Moto's app stopped + a fresh
-      `mix mob.connect` kept foregrounded) to drive consent → `{:screencast, :frame, …}` →
-      decode. Alternatively add a demo UI button so a tap triggers it without dist.
+    - [x] **Consent → projection → encoder pipeline EXECUTES on the Moto G.** The
+      MediaProjection consent dialog appears ("Start recording or casting with
+      MobPluginDemo? … Start now"), and tapping Start now grants it + runs
+      `onProjectionResult` (proven by a crash trace there before the guard landed). FOUR
+      bugs found+fixed by the device build/run: zig comptime atom; main-thread; the host is
+      a Compose ComponentActivity not a FragmentActivity (use ActivityResultRegistry like
+      mob_camera); `onProjectionResult` crashed unguarded on the encoder setup (now wrapped
+      + integer I-frame interval).
+    - [x] **FRAMES FLOW END-TO-END ON THE MOTO G (2026-06-10).** `capturing 358x720 @
+      1000000bps`; the collector saw `{:screencast, :frame, …}` count climb `{55,true}` →
+      `{75,true}` (~10 fps, keyframes prefixed with SPS/PPS), `ERR=:none`,
+      `screencast_stop_stream → :ok`. Two more real bugs found + fixed to get here:
+      - **Stale binary / driver_tab:** the running app reported `:nif_not_loaded` for
+        screencast while camera loaded — the installed `.so`'s compiled `driver_tab` predated
+        the screencast row (the regen happened after that build). A clean Android-only
+        `mix mob.deploy --native --device ZY22DP6HFL` rebuilt it and `screencast_request_keyframe`
+        returned `:ok`. (The dual-platform build fails on the not-yet-written iOS `.m`; the
+        `--device <android>` form builds Android only.)
+      - **Foreground service required even on API 30:** `getMediaProjection` threw
+        `SecurityException: Media projections require a foreground service of type …
+        MEDIA_PROJECTION`. The "API ≤ 33 runs directly" assumption was wrong on this OEM build.
+        Fixed: `ScreencastService` (foreground service, `FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION`,
+        folded into bridge_kt since the merge copies only one Kotlin file) + a `<service
+        android:foregroundServiceType="mediaProjection">` in the host AndroidManifest;
+        `onProjectionResult` now stashes the consent result and starts the service, which
+        foregrounds itself then calls `beginCaptureFromService` to obtain the projection.
   - [ ] **iOS** (`priv/native/ios/mob_screencast_nif.m`): `RPScreenRecorder` (in-app, per-session
     consent) sample buffers → `VideoToolbox` `VTCompressionSession` (H264) → Annex-B NALs →
     enif_send. ScreenCaptureKit for the simulator/macOS path.
@@ -58,8 +77,13 @@ Pairs with sloppy_joe's WebRTC device view: the H264 NALs drop straight into
 
 - **AndroidManifest fragment (foreground service):** a `MediaProjection` capture must run
   inside `<service android:foregroundServiceType="mediaProjection">`, which the plugin
-  manifest can't yet contribute (identical class to `mob_camera`'s FileProvider/uses-feature
-  gap). Stage-2 decision: add a manifest-fragment capability to the plugin system, or carry
-  the `<service>` in the host template gated on this plugin.
+  manifest can't yet contribute (`apply_plugin_android_manifest!` merges only
+  `<uses-permission>`, not `<service>` — identical class to `mob_camera`'s
+  FileProvider/uses-feature gap). **WORKED AROUND for the device verify** by carrying the
+  `<service android:name="io.mob.screencast.ScreencastService" …
+  foregroundServiceType="mediaProjection">` in the host (`mob_plugin_demo`) AndroidManifest;
+  the plugin contributes the `FOREGROUND_SERVICE*` `<uses-permission>` entries. **Stage-2
+  decision still open:** add a manifest-fragment capability to the plugin system so the
+  `<service>` ships with the plugin, instead of every host having to declare it.
 - **Per-session consent UX:** both platforms prompt the user each capture session. For an
   unattended emulator that's a one-time tap; for a phone it's per session by OS policy.
