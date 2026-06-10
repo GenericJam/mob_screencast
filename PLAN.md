@@ -23,9 +23,20 @@ Pairs with sloppy_joe's WebRTC device view: the H264 NALs drop straight into
     `MediaCodec` AVC encoder (surface input) ← `VirtualDisplay`, a drain thread that prepends
     SPS/PPS to keyframes and pushes Annex-B access units. `zig ast-check` clean; manifest
     tier 1. Targets API ≤ 33 (Moto G is API 30) so it runs without the foreground service.
-  - [ ] **Android device build + verify** — needs a host app activating the plugin, a
-    `--native` build (merges the zig NIF + bridge), deploy to the Moto G; confirm the
-    consent dialog, then `{:screencast, :frame, …}` H264 arrives and decodes.
+  - [~] **Android device build + partial verify** (mob_plugin_demo host, Moto G ZY22DP6HFL):
+    - [x] `--native` build merges the zig NIF + Kotlin bridge, compiles + links + **deploys**
+      (`mix mob.plugins` shows it tier 1, vetting clean). Two real bugs found + fixed by the
+      build/run: zig comptime atom (`erts.atom` needs a comptime string) + Kotlin main-thread
+      fragment launch (consent dialog must post to the main thread).
+    - [x] On-device: dist RPC confirmed `MobScreencast` + the NIF **load** and
+      `start_stream/2` is **callable** (collector launched on the Moto G).
+    - [ ] **Frame flow blocked by the device environment, not the plugin:** the Moto G's
+      dist is flaky (two-phone port collision; Android backgrounding suspends the BEAM, so
+      the node drops) and the shared demo host's other plugins (camera screen + its
+      permission dialog) compete with the MediaProjection consent. Needs a clean dedicated
+      session (a dedicated emulator, or the phone with the other Moto's app stopped + a fresh
+      `mix mob.connect` kept foregrounded) to drive consent → `{:screencast, :frame, …}` →
+      decode. Alternatively add a demo UI button so a tap triggers it without dist.
   - [ ] **iOS** (`priv/native/ios/mob_screencast_nif.m`): `RPScreenRecorder` (in-app, per-session
     consent) sample buffers → `VideoToolbox` `VTCompressionSession` (H264) → Annex-B NALs →
     enif_send. ScreenCaptureKit for the simulator/macOS path.
