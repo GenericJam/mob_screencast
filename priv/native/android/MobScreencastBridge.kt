@@ -7,8 +7,10 @@
 // priv/native/jni/mob_screencast_nif.zig.
 //
 // Implements MobActivityAware so it can reach the host Activity for the one-time
-// MediaProjection consent dialog (launched from a headless Fragment, so no MainActivity
-// change). NOTE: on Android 14+ (API 34) a MediaProjection capture must run inside a
+// MediaProjection consent dialog, launched via the ComponentActivity's
+// ActivityResultRegistry (mob's MainActivity is a Compose ComponentActivity, not a
+// FragmentActivity — same as mob_camera). NOTE: on Android 14+ (API 34) a MediaProjection
+// capture must run inside a
 // foreground service of type mediaProjection — an AndroidManifest <service> the plugin
 // manifest can't yet contribute (see PLAN.md). This first cut targets API <= 33 (the
 // Moto G is API 30), where MediaProjection runs directly.
@@ -27,10 +29,11 @@ import android.media.projection.MediaProjectionManager
 import android.os.Bundle
 import android.util.Log
 import android.view.Surface
-import androidx.fragment.app.Fragment
-import androidx.fragment.app.FragmentActivity
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.ActivityResultRegistryOwner
 import androidx.activity.result.contract.ActivityResultContracts
 import java.lang.ref.WeakReference
+import java.util.concurrent.atomic.AtomicLong
 import org.json.JSONObject
 
 object MobScreencastBridge : io.mob.plugin.MobActivityAware {
@@ -79,22 +82,39 @@ object MobScreencastBridge : io.mob.plugin.MobActivityAware {
         } catch (_: Throwable) {
         }
 
-        val activity = activityRef?.get() as? FragmentActivity ?: run {
-            Log.e("MobScreencast", "no FragmentActivity for the MediaProjection consent")
+        // mob's MainActivity is a ComponentActivity (Compose host), NOT a
+        // FragmentActivity — so register against its ActivityResultRegistry directly
+        // (the no-LifecycleOwner register overload is callable any time), exactly like
+        // mob_camera. Launch the MediaProjection consent intent and unregister in the
+        // callback.
+        val activity = activityRef?.get() ?: run {
+            Log.e("MobScreencast", "no activity for the MediaProjection consent")
             return
         }
-        // The NIF calls us on a BEAM thread; FragmentManager transactions (and the
-        // consent dialog) must run on the main thread.
-        android.os.Handler(android.os.Looper.getMainLooper()).post {
-            try {
-                val frag = ScreencastConsentFragment()
-                activity.supportFragmentManager.beginTransaction()
-                    .add(frag, "mob_screencast_consent").commitNow()
-            } catch (e: Throwable) {
-                Log.e("MobScreencast", "consent launch failed: ${e.message}")
+        val owner = activity as? ActivityResultRegistryOwner ?: run {
+            Log.e("MobScreencast", "activity is not an ActivityResultRegistryOwner")
+            return
+        }
+        try {
+            val mpm =
+                activity.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            val key = "mob_screencast_consent_${consentSeq.incrementAndGet()}"
+            var launcher: ActivityResultLauncher<Intent>? = null
+            launcher = owner.activityResultRegistry.register(
+                key, ActivityResultContracts.StartActivityForResult(),
+            ) { result ->
+                if (result.resultCode == Activity.RESULT_OK) {
+                    onProjectionResult(result.resultCode, result.data)
+                }
+                launcher?.unregister()
             }
+            launcher.launch(mpm.createScreenCaptureIntent())
+        } catch (e: Throwable) {
+            Log.e("MobScreencast", "consent launch failed: ${e.message}")
         }
     }
+
+    private val consentSeq = AtomicLong(0L)
 
     @JvmStatic
     fun screencast_stop_stream() = stopInternal()
@@ -200,21 +220,4 @@ object MobScreencastBridge : io.mob.plugin.MobActivityAware {
     }
 
     private fun even(n: Int): Int = if (n % 2 == 0) n else n - 1
-}
-
-// Headless Fragment that launches the MediaProjection consent dialog and hands the
-// result back to the bridge, so the plugin needs no MainActivity changes.
-class ScreencastConsentFragment : Fragment() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        val launcher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            if (result.resultCode == Activity.RESULT_OK) {
-                MobScreencastBridge.onProjectionResult(result.resultCode, result.data)
-            }
-            parentFragmentManager.beginTransaction().remove(this).commitAllowingStateLoss()
-        }
-        val mpm = requireActivity()
-            .getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        launcher.launch(mpm.createScreenCaptureIntent())
-    }
 }
