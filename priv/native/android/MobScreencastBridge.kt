@@ -132,40 +132,54 @@ object MobScreencastBridge : io.mob.plugin.MobActivityAware {
     // ── MediaProjection result → encoder + virtual display ─────────────────
 
     internal fun onProjectionResult(resultCode: Int, data: Intent?) {
-        val activity = activityRef?.get()
-        if (activity == null || data == null) return
-        val mpm = activity.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        val proj = mpm.getMediaProjection(resultCode, data) ?: return
-        projection = proj
-        // API 34 requires a registered callback; harmless earlier.
-        proj.registerCallback(object : MediaProjection.Callback() {
-            override fun onStop() = stopInternal()
-        }, null)
+        // Wrap the whole setup: a MediaCodec/VirtualDisplay misconfiguration must log +
+        // clean up, not crash the host app.
+        try {
+            val activity = activityRef?.get()
+            if (activity == null || data == null) return
+            val mpm =
+                activity.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            val proj = mpm.getMediaProjection(resultCode, data) ?: return
+            projection = proj
+            // API 34 requires a registered callback; harmless earlier.
+            proj.registerCallback(object : MediaProjection.Callback() {
+                override fun onStop() = stopInternal()
+            }, null)
 
-        val dm = activity.resources.displayMetrics
-        val (w, h) = captureSize(dm.widthPixels, dm.heightPixels, maxSize)
+            val dm = activity.resources.displayMetrics
+            val (w, h) = captureSize(dm.widthPixels, dm.heightPixels, maxSize)
 
-        val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, w, h).apply {
-            setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-            setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
-            setInteger(MediaFormat.KEY_FRAME_RATE, fps)
-            setFloat(MediaFormat.KEY_I_FRAME_INTERVAL, keyframeIntervalMs / 1000f)
+            val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, w, h).apply {
+                setInteger(
+                    MediaFormat.KEY_COLOR_FORMAT,
+                    MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface,
+                )
+                setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
+                setInteger(MediaFormat.KEY_FRAME_RATE, fps)
+                // Seconds; the integer form is the broadly-accepted one (the float
+                // overload is rejected by some encoders on older API levels).
+                setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, maxOf(1, keyframeIntervalMs / 1000))
+            }
+
+            val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+            codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            val surface = codec.createInputSurface()
+            codec.start()
+            encoder = codec
+            inputSurface = surface
+
+            virtualDisplay = proj.createVirtualDisplay(
+                "mob_screencast", w, h, dm.densityDpi,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, surface, null, null,
+            )
+
+            running = true
+            drainThread = Thread { drainLoop(codec, w, h) }.also { it.start() }
+            Log.i("MobScreencast", "capturing ${w}x${h} @ ${bitrate}bps")
+        } catch (e: Throwable) {
+            Log.e("MobScreencast", "projection setup failed: ${e.message}", e)
+            stopInternal()
         }
-
-        val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
-        codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-        val surface = codec.createInputSurface()
-        codec.start()
-        encoder = codec
-        inputSurface = surface
-
-        virtualDisplay = proj.createVirtualDisplay(
-            "mob_screencast", w, h, dm.densityDpi,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, surface, null, null,
-        )
-
-        running = true
-        drainThread = Thread { drainLoop(codec, w, h) }.also { it.start() }
     }
 
     private fun drainLoop(codec: MediaCodec, w: Int, h: Int) {
