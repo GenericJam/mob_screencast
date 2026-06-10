@@ -83,10 +83,17 @@ object MobScreencastBridge : io.mob.plugin.MobActivityAware {
             Log.e("MobScreencast", "no FragmentActivity for the MediaProjection consent")
             return
         }
-        // Launch the MediaProjection consent dialog from a headless fragment.
-        val frag = ScreencastConsentFragment()
-        activity.supportFragmentManager.beginTransaction()
-            .add(frag, "mob_screencast_consent").commitNow()
+        // The NIF calls us on a BEAM thread; FragmentManager transactions (and the
+        // consent dialog) must run on the main thread.
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            try {
+                val frag = ScreencastConsentFragment()
+                activity.supportFragmentManager.beginTransaction()
+                    .add(frag, "mob_screencast_consent").commitNow()
+            } catch (e: Throwable) {
+                Log.e("MobScreencast", "consent launch failed: ${e.message}")
+            }
+        }
     }
 
     @JvmStatic
