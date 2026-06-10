@@ -56,9 +56,28 @@ Pairs with sloppy_joe's WebRTC device view: the H264 NALs drop straight into
         android:foregroundServiceType="mediaProjection">` in the host AndroidManifest;
         `onProjectionResult` now stashes the consent result and starts the service, which
         foregrounds itself then calls `beginCaptureFromService` to obtain the projection.
-  - [ ] **iOS** (`priv/native/ios/mob_screencast_nif.m`): `RPScreenRecorder` (in-app, per-session
-    consent) sample buffers → `VideoToolbox` `VTCompressionSession` (H264) → Annex-B NALs →
-    enif_send. ScreenCaptureKit for the simulator/macOS path.
+  - [~] **iOS** (`priv/native/ios/mob_screencast_nif.m`): WRITTEN. `RPScreenRecorder`
+    (in-app `startCaptureWithHandler`, per-session consent, mic off) → `VideoToolbox`
+    `VTCompressionSession` (H264, constrained-baseline, no B-frames, realtime) → AVCC→Annex-B
+    conversion in the VT output callback (SPS/PPS from the format description prepended to
+    keyframes) → `enif_send` of the SAME `{:screencast, :frame, %{bytes, width, height, format:
+    :h264, timestamp_ms, keyframe}}` map the Android NIF emits. Consent outcome →
+    `{:screencast, :permission, :granted | :denied}` from the completion handler. All VT
+    lifecycle is serialized on a single `io.mob.screencast.session` queue (sample buffers
+    CFRetain'd across the async hop); `request_keyframe` sets a force-IDR flag for the next
+    encode. `ERL_NIF_INIT(mob_screencast_nif, …)`.
+    - [x] **Compiles + static-links** (verified isolated, not yet in a full mob build):
+      `-fsyntax-only` clean against iPhoneOS26.4 SDK; `-c` with mob's exact iOS NIF flags
+      (`-fobjc-arc -fmodules -DSTATIC_ERLANG_NIF -DSTATIC_ERLANG_NIF_LIBNAME=mob_screencast_nif`)
+      exits 0 and produces the `_mob_screencast_nif_nif_init` symbol the iOS driver_tab references.
+    - [ ] **Full mob iOS build + on-device verify** (iPhone — ReplayKit screen capture doesn't
+      work on the simulator). Needs re-enabling `:mob_screencast` in the host mob.exs (now safe:
+      the `.m` exists + compiles, so the dual-platform build no longer fails at
+      `mob_screencast_nif.o`) and a device. Drive `start_stream` → ReplayKit consent → confirm
+      `{:screencast, :frame, …}` H264 flows + a keyframe carries SPS/PPS. NOTE: `max_size` is
+      NOT yet honored on iOS (encodes at native screen res; bitrate is still capped by the
+      encoder's AverageBitRate, so output size is fine — quality/CPU only). A parallel iOS
+      agent shares this device + mob.exs, so coordinate.
 - [ ] **2 — sloppy_joe integration (architecture fork; downstream of the plugin).**
   The device BEAM has H264; getting it to the browser is the decision:
   - **A. Carrier relay** — the device ships NALs over its existing `/device` dial-out

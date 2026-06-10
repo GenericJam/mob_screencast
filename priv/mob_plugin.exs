@@ -35,6 +35,6 @@
     # On-device capture uses ReplayKit's in-app RPScreenRecorder (no broadcast
     # extension, no plist key — the user grants per session). ScreenCaptureKit is the
     # simulator/macOS path. The VideoToolbox encoder needs no extra entitlement.
-    frameworks: ["ReplayKit", "VideoToolbox", "CoreMedia"]
+    frameworks: ["ReplayKit", "VideoToolbox", "CoreMedia", "CoreVideo"]
   }
 }
