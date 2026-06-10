@@ -15,12 +15,18 @@ Pairs with sloppy_joe's WebRTC device view: the H264 NALs drop straight into
   (`start_stream`/`stop_stream`/`request_keyframe`, delivers `{:screencast, :frame, %{bytes,
   format: :h264, keyframe, …}}`), `src/mob_screencast_nif.erl` (3 stubs), `priv/mob_plugin.exs`.
   Compiles vs local mob; manifest validates + classifies **tier 1**.
-- [ ] **1b — native capture + encode (the bulk).**
-  - **Android** (`priv/native/android/MobScreencastBridge.kt` + `priv/native/jni/mob_screencast_nif.zig`):
-    `MediaProjection` (system consent intent) → `VirtualDisplay` → a `MediaCodec` AVC
-    encoder in surface mode → drain encoded NAL units → `nativeDeliverScreencastFrame`.
-    Must run under a foreground service (see Known gap).
-  - **iOS** (`priv/native/ios/mob_screencast_nif.m`): `RPScreenRecorder` (in-app, per-session
+- [~] **1b — native capture + encode (the bulk).**
+  - [x] **Android code written** (`priv/native/jni/mob_screencast_nif.zig` + `priv/native/android/MobScreencastBridge.kt`):
+    zig NIF mirrors the device-proven mob_camera pattern (nativeRegister + 3 NIFs +
+    nativeDeliverScreencastFrame → `{:screencast, :frame, %{bytes, …, keyframe}}`); Kotlin
+    bridge = `MediaProjection` (consent via a headless `ScreencastConsentFragment`) →
+    `MediaCodec` AVC encoder (surface input) ← `VirtualDisplay`, a drain thread that prepends
+    SPS/PPS to keyframes and pushes Annex-B access units. `zig ast-check` clean; manifest
+    tier 1. Targets API ≤ 33 (Moto G is API 30) so it runs without the foreground service.
+  - [ ] **Android device build + verify** — needs a host app activating the plugin, a
+    `--native` build (merges the zig NIF + bridge), deploy to the Moto G; confirm the
+    consent dialog, then `{:screencast, :frame, …}` H264 arrives and decodes.
+  - [ ] **iOS** (`priv/native/ios/mob_screencast_nif.m`): `RPScreenRecorder` (in-app, per-session
     consent) sample buffers → `VideoToolbox` `VTCompressionSession` (H264) → Annex-B NALs →
     enif_send. ScreenCaptureKit for the simulator/macOS path.
 - [ ] **2 — sloppy_joe integration (architecture fork; downstream of the plugin).**
