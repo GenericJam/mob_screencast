@@ -101,6 +101,10 @@ export fn Java_io_mob_screencast_MobScreencastBridge_nativeDeliverScreencastFram
     if (erts.enif_alloc_binary(nbytes, &nal) == 0) return;
     @memcpy(nal.data[0..nbytes], bytes[0..nbytes]);
 
+    // erts.atom takes a comptime string, so select between two pre-built atom terms
+    // (a runtime `if` inside the call isn't comptime-known).
+    const kf_atom = if (keyframe != 0) erts.atom(env, "true") else erts.atom(env, "false");
+
     const keys = [_]erts.ERL_NIF_TERM{
         erts.atom(env, "bytes"),
         erts.atom(env, "width"),
@@ -115,7 +119,7 @@ export fn Java_io_mob_screencast_MobScreencastBridge_nativeDeliverScreencastFram
         erts.enif_make_int(env, height),
         erts.atom(env, "h264"),
         erts.enif_make_int64(env, timestamp_ms),
-        erts.atom(env, if (keyframe != 0) "true" else "false"),
+        kf_atom,
     };
     const map = erts.makeMap(env, &keys, &vals) orelse return;
     const msg = erts.makeTuple(env, .{ erts.atom(env, "screencast"), erts.atom(env, "frame"), map });
