@@ -38,6 +38,13 @@ defmodule MobScreencastTest do
       assert "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" in m.android.permissions
     end
 
+    test "declares the manual <service> host requirement (the silent-failure landmine)",
+         %{manifest: m} do
+      assert [req] = m.host_requirements
+      assert req =~ "io.mob.screencast.ScreencastService"
+      assert req =~ "foregroundServiceType=\"mediaProjection\""
+    end
+
     test "every native source dir + Kotlin bridge the manifest references exists",
          %{manifest: m} do
       for %{native_dir: dir} <- m.nifs do

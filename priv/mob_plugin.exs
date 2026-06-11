@@ -24,17 +24,25 @@
       "android.permission.FOREGROUND_SERVICE",
       "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"
     ]
-    # KNOWN GAP (same class as mob_camera's FileProvider): a MediaProjection capture
-    # must run inside a foreground <service android:foregroundServiceType="mediaProjection">,
-    # which is an AndroidManifest fragment the plugin manifest can't yet contribute.
-    # Options (Stage-2 decision, tracked in EXTRACTION.md): add a manifest-fragment
-    # capability to the plugin system, or carry the <service> in the host template gated
-    # on mob_screencast. mob_camera flagged the identical gap for <provider>/<uses-feature>.
+    # A MediaProjection capture must run inside a typed foreground <service> — an
+    # AndroidManifest fragment the plugin manifest can't yet contribute (Stage-2
+    # decision, tracked in EXTRACTION.md). Declared in :host_requirements below so
+    # every native build warns the host author instead of failing silently at
+    # first capture (SecurityException). mob_camera has the same class of gap.
   },
   ios: %{
     # On-device capture uses ReplayKit's in-app RPScreenRecorder (no broadcast
     # extension, no plist key — the user grants per session). ScreenCaptureKit is the
     # simulator/macOS path. The VideoToolbox encoder needs no extra entitlement.
     frameworks: ["ReplayKit", "VideoToolbox", "CoreMedia", "CoreVideo"]
-  }
+  },
+  # Manual host-app steps the build can't automate; printed as a warning on
+  # every `mix mob.deploy --native` of the host.
+  host_requirements: [
+    "AndroidManifest.xml must declare the capture service inside <application>: " <>
+      ~s(<service android:name="io.mob.screencast.ScreencastService" ) <>
+      ~s(android:exported="false" android:foregroundServiceType="mediaProjection" />) <>
+      " — MediaProjection capture must run in a typed foreground service; without it " <>
+      "the app builds + boots fine and throws a SecurityException at first capture."
+  ]
 }
