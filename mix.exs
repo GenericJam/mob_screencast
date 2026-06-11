@@ -1,12 +1,18 @@
 defmodule MobScreencast.MixProject do
   use Mix.Project
 
+  @source_url "https://github.com/GenericJam/mob_screencast"
+
   def project do
     [
       app: :mob_screencast,
       version: "0.1.0",
       elixir: "~> 1.17",
-      deps: deps()
+      deps: deps(),
+      description:
+        "In-app screen capture to on-device H264 (MediaProjection/ReplayKit) for Mob apps",
+      package: package(),
+      source_url: @source_url
     ]
   end
 
@@ -26,6 +32,16 @@ defmodule MobScreencast.MixProject do
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:ex_slop, "~> 0.4.2", only: [:dev, :test], runtime: false},
       {:jump_credo_checks, "~> 0.1.0", only: [:dev, :test], runtime: false}
+    ]
+  end
+
+  defp package do
+    [
+      licenses: ["MIT"],
+      links: %{"GitHub" => @source_url},
+      # The native sources + manifest must ship in the package — the host's
+      # native build compiles them from deps/<plugin>/priv.
+      files: ~w(lib src priv mix.exs README* CHANGELOG* EXTRACTION*)
     ]
   end
 end
