@@ -50,22 +50,31 @@ defmodule MobScreencast do
   Options:
     * `:bitrate` — target encoder bitrate in bits/sec (default `2_000_000`).
     * `:max_size` — cap the longer screen edge to this many px, preserving aspect
-      (default: native resolution). Lower = less bandwidth/CPU.
+      (default: native resolution). Lower = less bandwidth/CPU. Currently honored
+      on Android only; the iOS encoder captures at native resolution.
     * `:fps` — target frame rate (default `30`).
     * `:keyframe_interval_ms` — force an IDR at least this often (default `2000`).
   """
   @spec start_stream(Mob.Socket.t(), keyword()) :: Mob.Socket.t()
   def start_stream(socket, opts \\ []) do
-    config =
-      %{
-        "bitrate" => Keyword.get(opts, :bitrate, 2_000_000),
-        "fps" => Keyword.get(opts, :fps, 30),
-        "keyframe_interval_ms" => Keyword.get(opts, :keyframe_interval_ms, 2_000)
-      }
-      |> put_optional("max_size", opts[:max_size])
-
-    @nif.screencast_start_stream(:json.encode(config))
+    @nif.screencast_start_stream(:json.encode(stream_opts(opts)))
     socket
+  end
+
+  @doc """
+  Build the config map passed to `screencast_start_stream/1`. Pure function
+  exposed so tests can pin defaults + serialisation without going through the
+  NIF. Note `:max_size` is currently honored on Android only — the iOS encoder
+  captures at native resolution (TODO in the iOS NIF).
+  """
+  @spec stream_opts(keyword()) :: map()
+  def stream_opts(opts) do
+    %{
+      "bitrate" => Keyword.get(opts, :bitrate, 2_000_000),
+      "fps" => Keyword.get(opts, :fps, 30),
+      "keyframe_interval_ms" => Keyword.get(opts, :keyframe_interval_ms, 2_000)
+    }
+    |> put_optional("max_size", opts[:max_size])
   end
 
   @doc "Stop the active screen-capture session."
