@@ -26,7 +26,7 @@
     ]
     # A MediaProjection capture must run inside a typed foreground <service> — an
     # AndroidManifest fragment the plugin manifest can't yet contribute (Stage-2
-    # decision, tracked in EXTRACTION.md). Declared in :host_requirements below so
+    # decision, tracked in PLAN.md). Declared in :host_requirements below so
     # every native build warns the host author instead of failing silently at
     # first capture (SecurityException). mob_camera has the same class of gap.
   },

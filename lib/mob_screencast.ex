@@ -7,8 +7,8 @@ defmodule MobScreencast do
   The native side captures the display (Android `MediaProjection`, iOS `ReplayKit` /
   `ScreenCaptureKit`) and hardware-encodes it to **H264 on-device** (`MediaCodec` /
   `VideoToolbox`), so the BEAM receives ready-to-send Annex-B NAL units rather than raw
-  frames. That output drops straight into a WebRTC RTP payloader (mob_screencast pairs
-  with sloppy_joe's `SloppyJoe.Media.Capture.H264`).
+  frames. That output drops straight into a WebRTC RTP payloader on the
+  receiving side.
 
   ## Streaming
 
