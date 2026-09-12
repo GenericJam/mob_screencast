@@ -53,6 +53,12 @@ object MobScreencastBridge : io.mob.plugin.MobActivityAware {
         pid: Long, bytes: ByteArray, width: Int, height: Int, timestampMs: Long, keyframe: Int,
     )
 
+    // {:screencast, :permission, :granted | :denied}
+    // Sent from the MediaProjection consent callback in both branches; a caller
+    // of MobScreencast.start_stream/1 gets a definitive answer before deciding
+    // whether to wait for frames. See MOB-87.
+    @JvmStatic external fun nativeDeliverScreencastPermission(pid: Long, granted: Int)
+
     @JvmStatic fun register() = nativeRegister()
 
     override fun setActivity(activity: Activity) {
@@ -110,7 +116,13 @@ object MobScreencastBridge : io.mob.plugin.MobActivityAware {
             launcher = owner.activityResultRegistry.register(
                 key, ActivityResultContracts.StartActivityForResult(),
             ) { result ->
-                if (result.resultCode == Activity.RESULT_OK) {
+                val ok = result.resultCode == Activity.RESULT_OK
+                // MOB-87: signal the outcome BEFORE the async begin-capture
+                // chain. A denied consent used to be completely silent;
+                // callers who awaited the {:screencast, :permission, ...}
+                // event blocked forever.
+                nativeDeliverScreencastPermission(streamPid, if (ok) 1 else 0)
+                if (ok) {
                     onProjectionResult(result.resultCode, result.data)
                 }
                 launcher?.unregister()

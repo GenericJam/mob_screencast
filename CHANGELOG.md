@@ -6,6 +6,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **Android: `{:screencast, :permission, :granted | :denied}` is now
+  actually delivered** (MOB-87). The MediaProjection consent callback
+  in `MobScreencastBridge` only invoked `onProjectionResult` on
+  `RESULT_OK` and dropped the denial path entirely — callers of
+  `MobScreencast.start_stream/1` who awaited the documented
+  `{:screencast, :permission, ...}` event blocked forever, and even
+  the granted case never emitted one (frames arrived, but the
+  intermediate `:permission` signal never did). A new
+  `nativeDeliverScreencastPermission/2` thunk (zig NIF +
+  Kotlin extern) fires from BOTH branches of the consent callback
+  before the async begin-capture chain, so callers can distinguish
+  "user said no" from "user said yes but frames not started yet".
+
+---
+
 ## [0.1.1] - 2026-06-16
 
 ### Changed
