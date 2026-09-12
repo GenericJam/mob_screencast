@@ -126,6 +126,32 @@ export fn Java_io_mob_screencast_MobScreencastBridge_nativeDeliverScreencastFram
     _ = erts.enif_send(null, &pid, env, msg);
 }
 
+// ── Inbound delivery — the MediaProjection consent callback calls this ────
+// Builds {:screencast, :permission, :granted | :denied} so the caller of
+// `MobScreencast.start_stream/1` knows the user's answer before any frame
+// arrives. Before MOB-87 the granted/denied outcome was silent — the
+// Elixir caller waited forever with no signal.
+export fn Java_io_mob_screencast_MobScreencastBridge_nativeDeliverScreencastPermission(
+    jenv: *jni.JNIEnv,
+    cls: jni.JClass,
+    pid_long: jni.JLong,
+    granted: c_int,
+) callconv(.c) void {
+    _ = jenv;
+    _ = cls;
+    var pid = pidFromLong(pid_long);
+    const env = erts.enif_alloc_env() orelse return;
+    defer erts.enif_free_env(env);
+
+    // erts.atom takes a comptime string, so pick the outcome atom via if
+    // instead of formatting a runtime name.
+    const outcome = if (granted != 0) erts.atom(env, "granted") else erts.atom(env, "denied");
+
+    const msg =
+        erts.makeTuple(env, .{ erts.atom(env, "screencast"), erts.atom(env, "permission"), outcome });
+    _ = erts.enif_send(null, &pid, env, msg);
+}
+
 // ── NIFs ──────────────────────────────────────────────────────────────────
 // Copy a binary/iolist arg into a null-terminated buffer (the bridge call's
 // newStringUTF copies it synchronously, so a stack buffer is fine).
