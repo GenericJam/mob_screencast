@@ -121,7 +121,12 @@ object MobScreencastBridge : io.mob.plugin.MobActivityAware {
                 // chain. A denied consent used to be completely silent;
                 // callers who awaited the {:screencast, :permission, ...}
                 // event blocked forever.
-                nativeDeliverScreencastPermission(streamPid, if (ok) 1 else 0)
+                // A link failure (stale .so missing the new export) must not
+                // block onProjectionResult on the grant path.
+                try {
+                    nativeDeliverScreencastPermission(streamPid, if (ok) 1 else 0)
+                } catch (_: Throwable) {
+                }
                 if (ok) {
                     onProjectionResult(result.resultCode, result.data)
                 }

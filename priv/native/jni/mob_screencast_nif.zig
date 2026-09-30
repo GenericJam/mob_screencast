@@ -80,26 +80,34 @@ fn callBridgeVoid(env: ?*erts.ErlNifEnv, method: jni.JMethodID) erts.ERL_NIF_TER
 
 // ── Inbound delivery — the MediaCodec drain calls this per access unit ────
 // Builds {:screencast, :frame, %{bytes, width, height, format: :h264, timestamp_ms, keyframe}}.
+// Signature mirrors the Kotlin `external fun nativeDeliverScreencastFrame(pid: Long,
+// bytes: ByteArray, width: Int, height: Int, timestampMs: Long, keyframe: Int)` exactly
+// (MOB-298: a raw pointer + length here shifted every argument). The byte[] is copied
+// out with GetArrayLength + GetByteArrayRegion (no pin/release).
 export fn Java_io_mob_screencast_MobScreencastBridge_nativeDeliverScreencastFrame(
     jenv: *jni.JNIEnv,
     cls: jni.JClass,
     pid_long: jni.JLong,
-    bytes: [*]const u8,
-    nbytes: usize,
-    width: c_int,
-    height: c_int,
+    bytes: jni.JByteArray,
+    width: jni.JInt,
+    height: jni.JInt,
     timestamp_ms: jni.JLong,
-    keyframe: c_int,
+    keyframe: jni.JInt,
 ) callconv(.c) void {
-    _ = jenv;
     _ = cls;
+    if (bytes == null) return;
     var pid = pidFromLong(pid_long);
     const env = erts.enif_alloc_env() orelse return;
     defer erts.enif_free_env(env);
 
+    const nbytes_j: jni.JInt = jenv.*.GetArrayLength.?(jenv, bytes);
+    if (nbytes_j < 0) return;
+    const nbytes: usize = @intCast(nbytes_j);
     var nal: erts.ErlNifBinary = undefined;
     if (erts.enif_alloc_binary(nbytes, &nal) == 0) return;
-    @memcpy(nal.data[0..nbytes], bytes[0..nbytes]);
+    if (nbytes_j > 0) {
+        jenv.*.GetByteArrayRegion.?(jenv, bytes, 0, nbytes_j, @ptrCast(nal.data));
+    }
 
     // erts.atom takes a comptime string, so select between two pre-built atom terms
     // (a runtime `if` inside the call isn't comptime-known).
@@ -115,8 +123,8 @@ export fn Java_io_mob_screencast_MobScreencastBridge_nativeDeliverScreencastFram
     };
     const vals = [_]erts.ERL_NIF_TERM{
         erts.enif_make_binary(env, &nal),
-        erts.enif_make_int(env, width),
-        erts.enif_make_int(env, height),
+        erts.enif_make_int(env, @intCast(width)),
+        erts.enif_make_int(env, @intCast(height)),
         erts.atom(env, "h264"),
         erts.enif_make_int64(env, timestamp_ms),
         kf_atom,
@@ -135,7 +143,7 @@ export fn Java_io_mob_screencast_MobScreencastBridge_nativeDeliverScreencastPerm
     jenv: *jni.JNIEnv,
     cls: jni.JClass,
     pid_long: jni.JLong,
-    granted: c_int,
+    granted: jni.JInt,
 ) callconv(.c) void {
     _ = jenv;
     _ = cls;

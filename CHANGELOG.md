@@ -6,7 +6,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ---
 
-## [Unreleased]
+## [0.1.2] - 2026-09-30
 
 ### Fixed
 
@@ -16,14 +16,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
   `RESULT_OK` and dropped the denial path entirely — callers of
   `MobScreencast.start_stream/1` who awaited the documented
   `{:screencast, :permission, ...}` event blocked forever, and even
-  the granted case never emitted one (frames arrived, but the
-  intermediate `:permission` signal never did). A new
+  the granted case never emitted one. A new
   `nativeDeliverScreencastPermission/2` thunk (zig NIF +
   Kotlin extern) fires from BOTH branches of the consent callback
   before the async begin-capture chain, so callers can distinguish
   "user said no" from "user said yes but frames not started yet".
+- **Android: screencast frames are no longer corrupt** (MOB-298). In
+  0.1.1 the zig `nativeDeliverScreencastFrame` thunk declared a raw
+  pointer + length where the Kotlin `external fun` passes a `ByteArray`,
+  shifting every JNI argument: each `{:screencast, :frame, ...}` event
+  carried a garbage `bytes` payload (read from arbitrary memory, length =
+  the capture width, no Annex-B start code), wrong `width`/`height`,
+  `timestamp_ms: 0` and `keyframe: false`. The thunk now matches the
+  Kotlin signature and copies the array with `GetByteArrayRegion`, so
+  frames carry the real H.264 access unit, capture size, timestamp and
+  keyframe flag.
 
----
+### Changed
+- **Re-signed with plugin envelope v2** (MOB-287). mob_dev 0.7.2+ verifies
+  this signature before evaluating the manifest. mob_dev 0.7.0 / 0.7.1 can't
+  read v2 signatures and report this release as `invalid signature` —
+  upgrade the host app to `{:mob_dev, "~> 0.7.2", only: :dev, runtime: false}`.
 
 ## [0.1.1] - 2026-06-16
 
