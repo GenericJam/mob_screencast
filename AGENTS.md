@@ -1,8 +1,8 @@
-# AGENTS.md — orientation for AI agents working on mob_screencast
+# mob_screencast — Agent Instructions
 
-You're in **mob_screencast**, a Mob capability plugin that captures the **device's own screen** and hardware-encodes it to H264 on-device — the in-app replacement for host-side `adb screenrecord`. Encoded Annex-B NAL units arrive in the calling screen's mailbox as `{:screencast, :frame, %{bytes, format: :h264, keyframe, ...}}`, ready to drop into a WebRTC RTP payloader.
+You're in **mob_screencast**, a Mob capability plugin (extracted from mob core in Wave 2) that captures the **device's own screen** and hardware-encodes it to H264 on-device — the in-app replacement for host-side `adb screenrecord`. Encoded Annex-B NAL units arrive in the calling screen's mailbox as `{:screencast, :frame, %{bytes, format: :h264, keyframe, ...}}`, ready to drop into a WebRTC RTP payloader.
 
-**Also read [`~/code/mob/AGENTS.md`](../mob/AGENTS.md)** for the system view — the three-repo topology, plugin manifest schema, `MobActivityAware`, native build pipeline, cross-cutting pre-empt-failure rules. This file is mob_screencast-specific.
+**Also read [`~/code/mob/AGENTS.md`](../mob/AGENTS.md)** for the system view — the three-repo topology, plugin manifest schema, `MobActivityAware`, native build pipeline, cross-cutting pre-empt-failure rules — and `~/code/mob/MOB_PLUGINS.md` for the manifest schema. This file is mob_screencast-specific.
 
 > **Keep this file current.** When you change the frame contract, add an option, or hit a gotcha that would trip the next agent, fix it here in the same commit — not a follow-up.
 
@@ -60,20 +60,49 @@ Native code isn't exercised by `mix test`. Device test:
 4. **The foreground-service host_requirement is not optional.** Every host running a real MediaProjection capture must declare that `<service>` — the plugin can print a warning but cannot enforce it. If a host reports `SecurityException` on first capture, check their AndroidManifest first.
 5. **BEAM receives compressed bytes only.** Never expose a raw-frame path in the NIF — the encoder-on-device story is the point.
 
-## Pre-commit + release
+## Pre-commit checklist
 
-Standard mob plugin gate:
+Standard mob plugin gate. Before committing, run all in this order:
 
 ```bash
 mix format
-mix credo --strict
+mix credo --strict                  # includes ExSlop + jump_credo_checks
 mix compile --warnings-as-errors
 mix test
 zig fmt priv/native/jni/*.zig
 xcrun clang-format -i priv/native/ios/*.m
-mix mob.validate_plugin   # from a host app
+mix mob.validate_plugin             # from a host app
 ```
 
-Activate the pre-push hook once per clone: `git config core.hooksPath .githooks`.
+Pre-push hook (`.githooks/pre-push`) adds format + credo strict + compile + fast tests on every push. Activate once per clone:
 
-Release = `mix.exs` `@version` bump on master. GH Actions handles tag + GitHub release + Hex publish, signed with the shared mob first-party key. Do NOT bump without a green device build and explicit permission.
+```bash
+git config core.hooksPath .githooks
+```
+
+Native changes (.m / .zig / .kt) aren't exercised by `mix test`. They need `mix mob.deploy --native` of a host app and a device check — for this plugin the check is: consent dialog fires, first frame is `keyframe: true`, `request_keyframe/0` produces an IDR within a `keyframe_interval_ms` window.
+
+### Tests are part of the change
+
+New behaviour ships with a test unless the change is small enough that a test would only restate it. Bar: **would this test fail if the fix were reverted?** For mob_screencast specifically:
+
+* Any change to `stream_opts/1` defaults needs a pin — the encoder is watching those numbers.
+* Any change to the `{:screencast, :frame, ...}` shape needs a matching moduledoc + Kotlin + zig + ObjC update in the same commit.
+
+### Adversarial review — before every non-trivial commit
+
+Spawn a subagent, point it at the diff, tell it to find defects. Especially:
+
+* **Per-session consent.** MediaProjection intents can't be cached across launches — a "clever optimization" here is a security regression.
+* **Keyframe SPS/PPS prepending.** A fresh viewer joining mid-stream must be able to decode after the next IDR. Off-by-one on prepending breaks this silently.
+* **Foreground-service host_requirement.** The `:host_requirements` warning is not decorative — a host without the `<service android:foregroundServiceType="mediaProjection" />` fragment throws `SecurityException` at first capture, not at build time.
+
+Skip only for: formatting, a typo, a version bump, a changelog edit.
+
+## Release flow
+
+Canonical process in [`~/code/mob/RELEASE.md`](../mob/RELEASE.md). mob_screencast specifics:
+
+* `@version` in `mix.exs` is the trigger. Push to master, GH Actions handles tag / GitHub release / Hex publish, signed with the shared mob first-party key.
+* Do NOT bump without a green device build and explicit permission.
+* **Never ship without a device build on both platforms** — the encoder paths (`MediaCodec` on Android, `VideoToolbox` on iOS) are genuinely different code, and simulators lie about screen-capture behaviour. Kevin has a Moto G Power 5G 2024 and an iPhone SE for device verification.
