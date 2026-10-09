@@ -6,7 +6,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ---
 
-## [Unreleased]
+## [0.1.3] - 2026-10-09
 
 ### Added
 
@@ -21,14 +21,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
   `mix mob.new --blank` app, is
   `{:skip, "host lacks <service io.mob.screencast.ScreencastService>"}`); on
   iOS it answers `true` (in-app ReplayKit needs nothing declared by the
-  host). Run it with `mix mob.selftest` from a host app (mob_dev 0.7.17).
-  Requires mob 0.9.15; `mob_version` in the manifest is now `~> 0.9`.
-- **Android: the NIF reports an unregistered bridge.** `screencast_start_stream/1`,
-  `screencast_stop_stream/0`, `screencast_request_keyframe/0` and
-  `screencast_service_declared/0` answer `{:error, :bridge_not_registered}`
-  when `MobScreencastBridge.register()` never ran or a method-ID lookup
-  failed, instead of calling JNI through a null class. The public API ignores
-  the return value; the self-test turns it into a failure.
+  host). `screencast_service_declared/0` is internal, used by the self-test.
+  Run it with
+  `mix mob.selftest` from a host app (mob_dev 0.7.17).
+
+### Changed
+
+- **Requires mob >= 0.9.15** (was `~> 0.7`), for `Mob.Plugin.SelfTest`;
+  `mob_version` in the manifest is now `~> 0.9` (was `~> 0.6`).
+
+### Fixed
+
+- **Android: an unregistered bridge no longer aborts the VM.**
+  `screencast_start_stream/1`, `screencast_stop_stream/0`,
+  `screencast_request_keyframe/0` and `screencast_service_declared/0` answer
+  `{:error, :bridge_not_registered}` when `MobScreencastBridge.register()`
+  never ran or a method-ID lookup failed, instead of calling JNI through a
+  null class. The public API ignores the return value; the self-test turns
+  it into a failure.
+- **Android: a failed method-ID lookup no longer crashes the app at
+  launch.** `nativeRegister` now clears the pending `NoSuchMethodError`
+  instead of letting it throw out of `register()`.
 
 ## [0.1.2] - 2026-09-30
 
