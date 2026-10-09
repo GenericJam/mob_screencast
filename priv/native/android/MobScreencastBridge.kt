@@ -21,8 +21,10 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.hardware.display.DisplayManager
 import android.os.Build
@@ -150,6 +152,38 @@ object MobScreencastBridge : io.mob.plugin.MobActivityAware {
                 putInt(MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME, 0)
             })
         } catch (_: Throwable) {
+        }
+    }
+
+    // Self-test probe (MOB-418): does the HOST AndroidManifest declare
+    // ScreencastService? Every capture runs inside it (see the class below), and
+    // the plugin manifest can only warn about it (:host_requirements). A
+    // PackageManager lookup — no service started, nothing shown.
+    // 1 = declared with foregroundServiceType mediaProjection, 0 = not declared,
+    // 2 = declared without the mediaProjection type (API 29+, startForeground would
+    // throw), 3 = no Activity handed to the bridge, -1 = the lookup threw.
+    // The Int-flags getServiceInfo is deprecated on API 33+ but is the overload
+    // every API level the host targets (minSdk 28) has.
+    @Suppress("DEPRECATION")
+    @JvmStatic
+    fun screencast_service_declared(): Int {
+        val activity = activityRef?.get() ?: return 3
+        return try {
+            val info = activity.packageManager.getServiceInfo(
+                ComponentName(activity, ScreencastService::class.java), 0,
+            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                (info.foregroundServiceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION) == 0
+            ) {
+                2
+            } else {
+                1
+            }
+        } catch (_: PackageManager.NameNotFoundException) {
+            0
+        } catch (e: Throwable) {
+            Log.e("MobScreencast", "service lookup failed: ${e.message}")
+            -1
         }
     }
 

@@ -6,6 +6,30 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **On-device self-test** (MOB-418). `MobScreencast.SelfTest` implements
+  `Mob.Plugin.SelfTest` and is declared in the manifest as `selftest:`. It
+  calls `screencast_stop_stream/0` while nothing is capturing (must answer
+  `:ok`: the NIF is linked and, on Android, the Kotlin bridge is registered),
+  then the new `screencast_service_declared/0`: on Android the bridge asks
+  `PackageManager.getServiceInfo` whether the host manifest declares
+  `io.mob.screencast.ScreencastService` with `foregroundServiceType`
+  `mediaProjection` (`true` passes; a host without it, such as a
+  `mix mob.new --blank` app, is
+  `{:skip, "host lacks <service io.mob.screencast.ScreencastService>"}`); on
+  iOS it answers `true` (in-app ReplayKit needs nothing declared by the
+  host). Run it with `mix mob.selftest` from a host app (mob_dev 0.7.17).
+  Requires mob 0.9.15; `mob_version` in the manifest is now `~> 0.9`.
+- **Android: the NIF reports an unregistered bridge.** `screencast_start_stream/1`,
+  `screencast_stop_stream/0`, `screencast_request_keyframe/0` and
+  `screencast_service_declared/0` answer `{:error, :bridge_not_registered}`
+  when `MobScreencastBridge.register()` never ran or a method-ID lookup
+  failed, instead of calling JNI through a null class. The public API ignores
+  the return value; the self-test turns it into a failure.
+
 ## [0.1.2] - 2026-09-30
 
 ### Fixed

@@ -4,7 +4,9 @@
 //! `io.mob.screencast.MobScreencastBridge` (MediaProjection → a MediaCodec AVC encoder
 //! fed by a VirtualDisplay; the encoder's Annex-B NAL units come back via the exported
 //! deliver thunk). Three NIFs (start/stop stream, request keyframe) call static bridge
-//! methods; encoded frames are pushed to the BEAM by nativeDeliverScreencastFrame.
+//! methods; a fourth (service_declared, the self-test's probe) asks the bridge whether
+//! the host manifest declares ScreencastService. Encoded frames are pushed to the BEAM
+//! by nativeDeliverScreencastFrame.
 //!
 //! Build path: compiled via `addZigObject` from `-Dplugin_zig_nifs`, reaching mob-core
 //! ERTS / JNI bindings through `@import("erts")` / `@import("jni")`. `get_jenv` + `g_jvm`
@@ -22,18 +24,39 @@ const ScMethods = struct {
     start_stream: jni.JMethodID = null,
     stop_stream: jni.JMethodID = null,
     request_keyframe: jni.JMethodID = null,
+    service_declared: jni.JMethodID = null,
 };
 
 var g_sc: ScMethods = .{};
 var g_sc_cls: jni.JClass = null;
 
 // ── nativeRegister thunk — cache the bridge jclass + method ids ───────────
+// A failed GetStaticMethodID leaves a NoSuchMethodError pending, which would be
+// thrown out of register() and crash the app at launch. Clear it (as mob core's
+// mob_nif.zig does) so the NIF answers {error, bridge_not_registered} instead.
 export fn Java_io_mob_screencast_MobScreencastBridge_nativeRegister(jenv: *jni.JNIEnv, cls: jni.JClass) callconv(.c) void {
     g_sc_cls = jni.newGlobalRef(jenv, cls);
     if (g_sc_cls == null) return;
     g_sc.start_stream = jni.getStaticMethodID(jenv, cls, "screencast_start_stream", "(JLjava/lang/String;)V");
+    if (g_sc.start_stream == null) jni.exceptionClear(jenv);
     g_sc.stop_stream = jni.getStaticMethodID(jenv, cls, "screencast_stop_stream", "()V");
+    if (g_sc.stop_stream == null) jni.exceptionClear(jenv);
     g_sc.request_keyframe = jni.getStaticMethodID(jenv, cls, "screencast_request_keyframe", "()V");
+    if (g_sc.request_keyframe == null) jni.exceptionClear(jenv);
+    g_sc.service_declared = jni.getStaticMethodID(jenv, cls, "screencast_service_declared", "()I");
+    if (g_sc.service_declared == null) jni.exceptionClear(jenv);
+}
+
+/// True, with the exception cleared, when the last JNI call left one pending.
+/// mob's JNIEnv wrapper does not declare ExceptionCheck, so this goes through
+/// ExceptionOccurred (declared as an opaque slot) and drops its local ref.
+fn takePendingException(jenv: *jni.JNIEnv) bool {
+    const occurred: *const fn (*jni.JNIEnv) callconv(.c) jni.JObject = @ptrCast(@alignCast(jenv.*.ExceptionOccurred.?));
+    const exc = occurred(jenv);
+    if (exc == null) return false;
+    jni.exceptionClear(jenv);
+    jni.deleteLocalRef(jenv, exc);
+    return true;
 }
 
 // ── Thread-attach + pid round-trip helpers (mirror mob-core / camera) ─────
@@ -58,8 +81,17 @@ inline fn pidFromLong(jpid: jni.JLong) erts.ErlNifPid {
     return .{ .pid = low };
 }
 
+/// {error, bridge_not_registered}: nativeRegister never ran (MobPluginBootstrap
+/// did not call register()) or a method-ID lookup failed. Calling through a null
+/// jclass / method id would abort the VM; the public API ignores the return
+/// value and MobScreencast.SelfTest turns it into a failure (MOB-418).
+fn bridgeNotRegistered(env: ?*erts.ErlNifEnv) erts.ERL_NIF_TERM {
+    return erts.makeTuple(env, .{ erts.atom(env, "error"), erts.atom(env, "bridge_not_registered") });
+}
+
 /// Call `MobScreencastBridge.<method>(pid_long, arg)`.
 fn callBridgePidStr(env: ?*erts.ErlNifEnv, method: jni.JMethodID, pid: erts.ErlNifPid, arg: ?[*:0]const u8) erts.ERL_NIF_TERM {
+    if (g_sc_cls == null or method == null) return bridgeNotRegistered(env);
     var attached: c_int = 0;
     const jenv = get_jenv(&attached) orelse return erts.atom(env, "error");
     const jarg: jni.JString = if (arg) |a| jni.newStringUTF(jenv, a) else null;
@@ -71,6 +103,7 @@ fn callBridgePidStr(env: ?*erts.ErlNifEnv, method: jni.JMethodID, pid: erts.ErlN
 
 /// Call a no-arg static void bridge method.
 fn callBridgeVoid(env: ?*erts.ErlNifEnv, method: jni.JMethodID) erts.ERL_NIF_TERM {
+    if (g_sc_cls == null or method == null) return bridgeNotRegistered(env);
     var attached: c_int = 0;
     const jenv = get_jenv(&attached) orelse return erts.atom(env, "error");
     jenv.*.CallStaticVoidMethod.?(jenv, g_sc_cls, method);
@@ -194,6 +227,33 @@ fn nif_screencast_request_keyframe(env: ?*erts.ErlNifEnv, argc: c_int, argv: [*]
     return callBridgeVoid(env, g_sc.request_keyframe);
 }
 
+// Whether the HOST AndroidManifest declares io.mob.screencast.ScreencastService
+// (the typed foreground service every capture runs in; the plugin manifest lists
+// it under :host_requirements). A PackageManager lookup in the bridge, no side
+// effects. Kotlin answers 1 = declared with foregroundServiceType mediaProjection,
+// 0 = not declared, 2 = declared without the mediaProjection type (API 29+),
+// 3 = no Activity handed to the bridge, anything else = the lookup failed. A
+// pending Java exception is also lookup_failed: CallStaticIntMethod's return is
+// then meaningless and must never read as 0 = "not declared".
+fn nif_screencast_service_declared(env: ?*erts.ErlNifEnv, argc: c_int, argv: [*]const erts.ERL_NIF_TERM) callconv(.c) erts.ERL_NIF_TERM {
+    _ = argc;
+    _ = argv;
+    if (g_sc_cls == null or g_sc.service_declared == null) return bridgeNotRegistered(env);
+    var attached: c_int = 0;
+    const jenv = get_jenv(&attached) orelse return erts.atom(env, "error");
+    const code = jenv.*.CallStaticIntMethod.?(jenv, g_sc_cls, g_sc.service_declared);
+    const threw = takePendingException(jenv);
+    detachIfAttached(attached);
+    if (threw) return erts.makeTuple(env, .{ erts.atom(env, "error"), erts.atom(env, "lookup_failed") });
+    return switch (code) {
+        1 => erts.atom(env, "true"),
+        0 => erts.atom(env, "false"),
+        2 => erts.makeTuple(env, .{ erts.atom(env, "error"), erts.atom(env, "not_media_projection") }),
+        3 => erts.makeTuple(env, .{ erts.atom(env, "error"), erts.atom(env, "no_activity") }),
+        else => erts.makeTuple(env, .{ erts.atom(env, "error"), erts.atom(env, "lookup_failed") }),
+    };
+}
+
 // ── NIF table + init entry point ─────────────────────────────────────────
 fn nifLoad(env: ?*erts.ErlNifEnv, priv: *?*anyopaque, info: erts.ERL_NIF_TERM) callconv(.c) c_int {
     _ = env;
@@ -206,6 +266,7 @@ const nif_funcs = [_]erts.ErlNifFunc{
     .{ .name = "screencast_start_stream", .arity = 1, .fptr = nif_screencast_start_stream, .flags = 0 },
     .{ .name = "screencast_stop_stream", .arity = 0, .fptr = nif_screencast_stop_stream, .flags = 0 },
     .{ .name = "screencast_request_keyframe", .arity = 0, .fptr = nif_screencast_request_keyframe, .flags = 0 },
+    .{ .name = "screencast_service_declared", .arity = 0, .fptr = nif_screencast_service_declared, .flags = 0 },
 };
 
 var nif_entry: erts.ErlNifEntry = .{

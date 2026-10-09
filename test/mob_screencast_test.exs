@@ -64,13 +64,14 @@ defmodule MobScreencastTest do
 
     # Guards the .erl stub / manifest, not app code — VacuousTest can't see that.
     # credo:disable-for-next-line Jump.CredoChecks.VacuousTest
-    test "every NIF the public API calls is exported by the stub at the right arity" do
+    test "every NIF the public API and the self-test call is exported by the stub at the right arity" do
       exports = :mob_screencast_nif.module_info(:exports)
 
       for fa <- [
             screencast_start_stream: 1,
             screencast_stop_stream: 0,
-            screencast_request_keyframe: 0
+            screencast_request_keyframe: 0,
+            screencast_service_declared: 0
           ] do
         assert fa in exports, "#{inspect(fa)} missing from mob_screencast_nif exports"
       end
