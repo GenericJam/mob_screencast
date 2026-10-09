@@ -313,11 +313,24 @@ static ERL_NIF_TERM nif_screencast_request_keyframe(ErlNifEnv *env, int argc,
     return enif_make_atom(env, "ok");
 }
 
+// Self-test probe (MOB-418), the counterpart of the Android bridge's
+// ScreencastService manifest lookup. In-app ReplayKit capture needs nothing
+// declared by the host (no broadcast extension, no Info.plist key, no
+// entitlement), so the answer is always true; reaching it proves this
+// export is in the linked NIF table.
+static ERL_NIF_TERM nif_screencast_service_declared(ErlNifEnv *env, int argc,
+                                                    const ERL_NIF_TERM argv[]) {
+    (void)argc;
+    (void)argv;
+    return enif_make_atom(env, "true");
+}
+
 // ── Registration ──────────────────────────────────────────────────────────────
 static ErlNifFunc nif_funcs[] = {
     {"screencast_start_stream", 1, nif_screencast_start_stream, 0},
     {"screencast_stop_stream", 0, nif_screencast_stop_stream, 0},
     {"screencast_request_keyframe", 0, nif_screencast_request_keyframe, 0},
+    {"screencast_service_declared", 0, nif_screencast_service_declared, 0},
 };
 
 ERL_NIF_INIT(mob_screencast_nif, nif_funcs, NULL, NULL, NULL, NULL)

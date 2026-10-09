@@ -20,7 +20,8 @@ Three public functions: `start_stream/2`, `stop_stream/1`, `request_keyframe/0`.
 ## Anatomy of the plugin
 
 * `lib/mob_screencast.ex` — the public API. Moduledoc is the canonical contract for the `{:screencast, :frame, ...}` and `{:screencast, :permission, ...}` message shapes.
-* `src/mob_screencast_nif.erl` — three Erlang NIF stubs (`screencast_start_stream/1`, `screencast_stop_stream/0`, `screencast_request_keyframe/0`).
+* `src/mob_screencast_nif.erl` — four Erlang NIF stubs (`screencast_start_stream/1`, `screencast_stop_stream/0`, `screencast_request_keyframe/0`, and the self-test probe `screencast_service_declared/0`: Android asks `PackageManager` whether the host manifest declares `ScreencastService` with the `mediaProjection` type, iOS always answers `true`).
+* `lib/mob_screencast/self_test.ex` — `MobScreencast.SelfTest` (`Mob.Plugin.SelfTest`, run by `mix mob.selftest`): `screencast_stop_stream/0` while idle must answer `:ok`, then `screencast_service_declared/0`; a host without the service is a skip, not a pass. On Android every NIF answers `{:error, :bridge_not_registered}` (instead of calling JNI through a null class) when `MobScreencastBridge.register()` never ran.
 * `priv/mob_plugin.exs` — the manifest. Android `:permissions` = `FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_MEDIA_PROJECTION`. `:host_requirements` warns about a manifest fragment the plugin cannot yet contribute.
 * `priv/native/ios/mob_screencast_nif.m` — Objective-C NIF: ReplayKit / ScreenCaptureKit capture + VideoToolbox AVC encoder; emits Annex-B via `enif_send` (mob_camera-style).
 * `priv/native/jni/mob_screencast_nif.zig` — Android NIF glue.

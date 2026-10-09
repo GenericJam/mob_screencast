@@ -61,6 +61,11 @@ MediaProjection capture must run in a typed foreground service; without the
 declaration the app builds and boots fine, then throws a `SecurityException`
 at first capture.
 
+`MobScreencast.SelfTest` checks this on the device: run `mix mob.selftest`
+(mob_dev >= 0.7.17) from a host app that depends on the plugin. It skips with
+`host lacks <service io.mob.screencast.ScreencastService>` on an Android host
+without the declaration.
+
 ## Limits
 
 - `:max_size` is honored on **Android only** — the iOS encoder currently

@@ -12,7 +12,8 @@
 -export([
     screencast_start_stream/1,
     screencast_stop_stream/0,
-    screencast_request_keyframe/0
+    screencast_request_keyframe/0,
+    screencast_service_declared/0
 ]).
 -on_load(init/0).
 
@@ -29,4 +30,9 @@ screencast_stop_stream() ->
     erlang:nif_error(nif_not_loaded).
 
 screencast_request_keyframe() ->
+    erlang:nif_error(nif_not_loaded).
+
+%% Self-test probe: Android answers whether the host manifest declares
+%% io.mob.screencast.ScreencastService; iOS always answers true.
+screencast_service_declared() ->
     erlang:nif_error(nif_not_loaded).

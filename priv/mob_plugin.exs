@@ -1,9 +1,12 @@
 %{
   name: :mob_screencast,
-  mob_version: "~> 0.6",
+  mob_version: "~> 0.9",
   plugin_spec_version: 1,
   description:
     "In-app screen capture → on-device H264 (MediaProjection/MediaCodec, ReplayKit/VideoToolbox), streamed to the BEAM as Annex-B NAL units for WebRTC",
+  # On-device proof for `mix mob.selftest` / mob_ci: stop_stream/0 while idle, then
+  # whether the host declares ScreencastService (see Mob.Plugin.SelfTest).
+  selftest: MobScreencast.SelfTest,
   nifs: [
     # iOS: Objective-C NIF — ReplayKit/ScreenCaptureKit capture + a VideoToolbox AVC
     # encoder; emits Annex-B access units via cam_send-style enif_send. lang: :objc
