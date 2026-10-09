@@ -31,13 +31,32 @@ var g_sc: ScMethods = .{};
 var g_sc_cls: jni.JClass = null;
 
 // ── nativeRegister thunk — cache the bridge jclass + method ids ───────────
+// A failed GetStaticMethodID leaves a NoSuchMethodError pending, which would be
+// thrown out of register() and crash the app at launch. Clear it (as mob core's
+// mob_nif.zig does) so the NIF answers {error, bridge_not_registered} instead.
 export fn Java_io_mob_screencast_MobScreencastBridge_nativeRegister(jenv: *jni.JNIEnv, cls: jni.JClass) callconv(.c) void {
     g_sc_cls = jni.newGlobalRef(jenv, cls);
     if (g_sc_cls == null) return;
     g_sc.start_stream = jni.getStaticMethodID(jenv, cls, "screencast_start_stream", "(JLjava/lang/String;)V");
+    if (g_sc.start_stream == null) jni.exceptionClear(jenv);
     g_sc.stop_stream = jni.getStaticMethodID(jenv, cls, "screencast_stop_stream", "()V");
+    if (g_sc.stop_stream == null) jni.exceptionClear(jenv);
     g_sc.request_keyframe = jni.getStaticMethodID(jenv, cls, "screencast_request_keyframe", "()V");
+    if (g_sc.request_keyframe == null) jni.exceptionClear(jenv);
     g_sc.service_declared = jni.getStaticMethodID(jenv, cls, "screencast_service_declared", "()I");
+    if (g_sc.service_declared == null) jni.exceptionClear(jenv);
+}
+
+/// True, with the exception cleared, when the last JNI call left one pending.
+/// mob's JNIEnv wrapper does not declare ExceptionCheck, so this goes through
+/// ExceptionOccurred (declared as an opaque slot) and drops its local ref.
+fn takePendingException(jenv: *jni.JNIEnv) bool {
+    const occurred: *const fn (*jni.JNIEnv) callconv(.c) jni.JObject = @ptrCast(@alignCast(jenv.*.ExceptionOccurred.?));
+    const exc = occurred(jenv);
+    if (exc == null) return false;
+    jni.exceptionClear(jenv);
+    jni.deleteLocalRef(jenv, exc);
+    return true;
 }
 
 // ── Thread-attach + pid round-trip helpers (mirror mob-core / camera) ─────
@@ -213,7 +232,9 @@ fn nif_screencast_request_keyframe(env: ?*erts.ErlNifEnv, argc: c_int, argv: [*]
 // it under :host_requirements). A PackageManager lookup in the bridge, no side
 // effects. Kotlin answers 1 = declared with foregroundServiceType mediaProjection,
 // 0 = not declared, 2 = declared without the mediaProjection type (API 29+),
-// 3 = no Activity handed to the bridge, anything else = the lookup threw.
+// 3 = no Activity handed to the bridge, anything else = the lookup failed. A
+// pending Java exception is also lookup_failed: CallStaticIntMethod's return is
+// then meaningless and must never read as 0 = "not declared".
 fn nif_screencast_service_declared(env: ?*erts.ErlNifEnv, argc: c_int, argv: [*]const erts.ERL_NIF_TERM) callconv(.c) erts.ERL_NIF_TERM {
     _ = argc;
     _ = argv;
@@ -221,8 +242,9 @@ fn nif_screencast_service_declared(env: ?*erts.ErlNifEnv, argc: c_int, argv: [*]
     var attached: c_int = 0;
     const jenv = get_jenv(&attached) orelse return erts.atom(env, "error");
     const code = jenv.*.CallStaticIntMethod.?(jenv, g_sc_cls, g_sc.service_declared);
-    jni.exceptionClear(jenv);
+    const threw = takePendingException(jenv);
     detachIfAttached(attached);
+    if (threw) return erts.makeTuple(env, .{ erts.atom(env, "error"), erts.atom(env, "lookup_failed") });
     return switch (code) {
         1 => erts.atom(env, "true"),
         0 => erts.atom(env, "false"),

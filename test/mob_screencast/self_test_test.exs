@@ -58,12 +58,18 @@ defmodule MobScreencast.SelfTestTest do
     assert reason =~ "MobScreencastBridge was never registered"
   end
 
-  test "an unregistered bridge or missing Activity in the service lookup is a failure" do
+  test "an unregistered bridge, missing Activity or failed lookup is a failure, not a skip" do
     assert {:fail, reason} = run_with(@android, :ok, {:error, :no_activity})
     assert reason =~ "MobScreencastBridge has no Activity"
 
     assert {:fail, reason} = run_with(@android, :ok, {:error, :bridge_not_registered})
     assert reason =~ "screencast_service_declared/0 on android returned"
+
+    # The zig NIF answers this when the Kotlin lookup left a Java exception pending.
+    assert run_with(@android, :ok, {:error, :lookup_failed}) ==
+             {:fail,
+              "screencast_service_declared/0 on android returned {:error, :lookup_failed}, " <>
+                "expected true"}
   end
 
   test "iOS has no host service to miss: false there is a failure, not a skip" do

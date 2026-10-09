@@ -31,7 +31,8 @@ defmodule MobScreencast.SelfTest do
          that name what the host lacks: the plugin's native side answered,
          the host is incomplete. `{:error, :no_activity}` (the bootstrap
          never handed the bridge an Activity, so `start_stream/2` could not
-         launch the consent dialog either) is a failure.
+         launch the consent dialog either) and `{:error, :lookup_failed}`
+         (the lookup threw, or left a Java exception pending) are failures.
        * iOS: always `true`; in-app ReplayKit needs nothing declared by the
          host (no broadcast extension, no Info.plist key). Reaching it proves
          the export is in the linked NIF table.
